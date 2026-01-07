@@ -2,8 +2,6 @@
 
 O **NexusPDF Pro** é um editor de PDF moderno, rápido e rodando inteiramente no navegador (Client-Side). Desenvolvido com **Next.js**, permite editar textos, alterar fontes, destacar trechos e salvar o documento final mantendo a formatação original.
 
-![NexusPDF Banner](https://via.placeholder.com/1200x600/111111/3b82f6?text=NexusPDF+Pro+Preview)
-
 ## 🚀 Funcionalidades
 
 - **Edição de Texto em Tempo Real**: Clique e edite qualquer texto do PDF.
