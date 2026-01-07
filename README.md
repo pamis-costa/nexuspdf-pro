@@ -29,4 +29,4 @@ O **NexusPDF Pro** é um editor de PDF moderno, rápido e rodando inteiramente n
 
 1. Clone o repositório:
 ```bash
-git clone [https://github.com/pamis-costa/nexuspdf-pro.git](https://github.com/pamis-costa/nexuspdf-pro.git)
+git clone [https://github.com/pamis-costa/nexuspdf-pro.git]
