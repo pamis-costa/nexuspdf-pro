@@ -350,7 +350,7 @@ export default function Editor() {
 
             <div className="w-px h-6 bg-gray-700 mx-1"></div>
 
-            {activeItemId ? (
+            {activeItem ? (
               activeItem?.isDeleted ? (
                 <button
                   onMouseDown={(e) => e.preventDefault()}
