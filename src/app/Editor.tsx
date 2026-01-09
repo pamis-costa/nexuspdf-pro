@@ -1,17 +1,18 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import * as pdfjsLib from 'pdfjs-dist';
 import { 
   Download, FileUp, Loader2, Bold, 
-  Trash2, Undo2, Highlighter, XCircle, Type 
+  Trash2, Undo2, Highlighter, XCircle, Type,
+  PlusSquare, Move, Minus, Plus
 } from 'lucide-react';
 
-// Configuração do Worker
+// --- CONFIGURAÇÃO DO WORKER DO PDF.JS ---
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
-// --- CONFIGURAÇÃO DE FONTES ---
+// --- TIPOS E CONFIGURAÇÕES ---
 const FONT_OPTIONS = [
   { label: 'Arial', value: 'Arial', css: 'Arial, sans-serif', pdfFont: 'Helvetica' },
   { label: 'Helvetica', value: 'Helvetica', css: 'Helvetica, sans-serif', pdfFont: 'Helvetica' },
@@ -35,18 +36,17 @@ interface TextItem {
   y: number;
   width: number;
   height: number;
-  pdfX: number;
-  pdfY: number;
+  pdfX: number; // Usado para texto original
+  pdfY: number; // Usado para texto original
   fontSize: number;
-  
   originalFontName: string;
   fontFamily: string;
-  
   isBold: boolean;
   isDeleted: boolean;
   highlightColor: string | null;
   pageIndex: number;
   isEditing: boolean;
+  isAdded: boolean; // NOVO: Identifica se é uma caixa de texto adicionada
 }
 
 export default function Editor() {
@@ -56,6 +56,10 @@ export default function Editor() {
   const [history, setHistory] = useState<TextItem[][]>([]);
   const [loading, setLoading] = useState(false);
   const [activeItemId, setActiveItemId] = useState<string | null>(null);
+  
+  // Estado para Drag and Drop
+  const [draggingItemId, setDraggingItemId] = useState<string | null>(null);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
 
   const scale = 1.5; 
 
@@ -111,8 +115,8 @@ export default function Editor() {
           }
 
           const fontNameLower = realFontName.toLowerCase();
-          
           let detectedFont = 'Arial';
+          
           if (fontNameLower.includes('times') || fontNameLower.includes('roman')) detectedFont = 'Times New Roman';
           else if (fontNameLower.includes('georgia')) detectedFont = 'Georgia';
           else if (fontNameLower.includes('garamond')) detectedFont = 'Garamond';
@@ -124,10 +128,7 @@ export default function Editor() {
           else if (fontNameLower.includes('comic')) detectedFont = 'Comic Sans MS';
           else if (fontNameLower.includes('helvetica')) detectedFont = 'Helvetica';
 
-          const isBoldDetected = fontNameLower.includes('bold') || 
-                                 fontNameLower.includes('black') || 
-                                 fontNameLower.includes('heavy') || 
-                                 fontNameLower.includes('bd');
+          const isBoldDetected = fontNameLower.includes('bold') || fontNameLower.includes('black') || fontNameLower.includes('heavy');
 
           const correctedY = tx[5] - (fontHeight * viewport.scale * 0.87); 
           const safeWidth = item.width * (tx[0] / item.transform[0]); 
@@ -149,7 +150,8 @@ export default function Editor() {
             isDeleted: false,
             highlightColor: null,
             pageIndex: i - 1,
-            isEditing: false
+            isEditing: false,
+            isAdded: false // Item original
           });
         });
       }
@@ -165,8 +167,74 @@ export default function Editor() {
     }
   };
 
+  // --- LÓGICA DE CAIXA DE TEXTO ADICIONADA ---
+  const addNewText = () => {
+    if (pageImages.length === 0) return;
+    
+    addToHistory();
+    const newItem: TextItem = {
+      id: Math.random().toString(36).substr(2, 9),
+      text: "Novo Texto",
+      originalText: "",
+      x: 50, // Posição inicial X
+      y: 50, // Posição inicial Y
+      width: 150,
+      height: 20 * scale,
+      pdfX: 0, // Será calculado ao salvar
+      pdfY: 0, // Será calculado ao salvar
+      fontSize: 16, // Tamanho padrão
+      originalFontName: "",
+      fontFamily: "Arial",
+      isBold: false,
+      isDeleted: false,
+      highlightColor: null,
+      pageIndex: 0, // Adiciona na primeira página por padrão (ou poderia ser a atual)
+      isEditing: true,
+      isAdded: true // MARCA COMO ADICIONADO
+    };
+    
+    setTextItems(prev => [...prev, newItem]);
+    setActiveItemId(newItem.id);
+  };
+
+  // --- LÓGICA DE DRAG AND DROP ---
+  const handleMouseDown = (e: React.MouseEvent, item: TextItem) => {
+    if (!item.isAdded) return; // Só move se for item adicionado
+    if (item.isEditing) return; // Não move se estiver editando texto
+
+    e.preventDefault();
+    setActiveItemId(item.id);
+    setDraggingItemId(item.id);
+    setDragOffset({
+      x: e.clientX - item.x,
+      y: e.clientY - item.y
+    });
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!draggingItemId) return;
+    
+    const item = textItems.find(i => i.id === draggingItemId);
+    if (!item) return;
+
+    const newX = e.clientX - dragOffset.x;
+    const newY = e.clientY - dragOffset.y;
+
+    setTextItems(prev => prev.map(i => 
+      i.id === draggingItemId ? { ...i, x: newX, y: newY } : i
+    ));
+  };
+
+  const handleMouseUp = () => {
+    if (draggingItemId) {
+        addToHistory(); // Salva no histórico após mover
+        setDraggingItemId(null);
+    }
+  };
+
   const handleTextClick = (id: string) => {
     setActiveItemId(id);
+    // Se não estiver arrastando, ativa edição
     setTextItems(prev => prev.map(item => ({
       ...item,
       isEditing: item.id === id
@@ -207,12 +275,31 @@ export default function Editor() {
     ));
   };
 
+  const changeFontSize = (delta: number) => {
+    if (!activeItemId) return;
+    addToHistory();
+    setTextItems(prev => prev.map(item => {
+        if (item.id === activeItemId) {
+            const newSize = Math.max(8, item.fontSize + delta); // Mínimo 8px
+            return { ...item, fontSize: newSize, height: newSize * scale };
+        }
+        return item;
+    }));
+  };
+
   const deleteItem = () => {
     if (!activeItemId) return;
     addToHistory();
-    setTextItems(prev => prev.map(item => 
-      item.id === activeItemId ? { ...item, isDeleted: true, isEditing: false } : item
-    ));
+    // Se for item adicionado, remove do array. Se for original, marca como deletado.
+    const item = textItems.find(i => i.id === activeItemId);
+    if (item?.isAdded) {
+        setTextItems(prev => prev.filter(i => i.id !== activeItemId));
+        setActiveItemId(null);
+    } else {
+        setTextItems(prev => prev.map(i => 
+          i.id === activeItemId ? { ...i, isDeleted: true, isEditing: false } : i
+        ));
+    }
   };
 
   const restoreItem = () => {
@@ -257,12 +344,15 @@ export default function Editor() {
         const hasStyleChange = item.isBold;
         const hasHighlight = item.highlightColor !== null;
         const isDeleted = item.isDeleted;
+        const isAdded = item.isAdded;
         
-        if (!hasTextChange && !hasStyleChange && !hasHighlight && !isDeleted) return;
+        if (!hasTextChange && !hasStyleChange && !hasHighlight && !isDeleted && !isAdded) return;
 
         const page = docPages[item.pageIndex];
+        const { height } = page.getSize(); // Altura da página PDF
 
-        if (hasTextChange || hasStyleChange || hasHighlight || isDeleted) {
+        // 1. Apagar o texto original (apenas para itens originais modificados)
+        if (!isAdded && (hasTextChange || hasStyleChange || hasHighlight || isDeleted)) {
            page.drawRectangle({
             x: item.pdfX,
             y: item.pdfY - (item.fontSize * 0.2),
@@ -274,6 +364,7 @@ export default function Editor() {
 
         if (isDeleted) return;
 
+        // 2. Selecionar fonte
         let fontToUse = helvetica;
         const selectedOption = FONT_OPTIONS.find(f => f.value === item.fontFamily);
         const pdfFontType = selectedOption ? selectedOption.pdfFont : 'Helvetica';
@@ -286,24 +377,39 @@ export default function Editor() {
             fontToUse = item.isBold ? helveticaBold : helvetica;
         }
 
+        // 3. Coordenadas (Cálculo diferente para itens novos)
+        let finalX = item.pdfX;
+        let finalY = item.pdfY;
+
+        if (isAdded) {
+            // Converter DOM coords (Top-Left) para PDF coords (Bottom-Left)
+            // A coordenada Y do DOM precisa ser invertida em relação à altura da página
+            // Nota: O scale afeta a visualização, então dividimos por ele
+            finalX = item.x / scale;
+            // Ajuste fino da posição Y
+            finalY = height - (item.y / scale) - (item.fontSize * 0.8); 
+        }
+
+        // 4. Desenhar Highlight
         if (item.highlightColor) {
             const r = parseInt(item.highlightColor.slice(1, 3), 16) / 255;
             const g = parseInt(item.highlightColor.slice(3, 5), 16) / 255;
             const b = parseInt(item.highlightColor.slice(5, 7), 16) / 255;
 
             page.drawRectangle({
-                x: item.pdfX,
-                y: item.pdfY - (item.fontSize * 0.2),
-                width: item.width / scale + 2,
+                x: finalX,
+                y: finalY - (item.fontSize * 0.2),
+                width: (item.width / scale) + 10, // Um pouco mais largo para itens novos
                 height: item.fontSize * 1.2,
                 color: rgb(r, g, b),
                 opacity: 0.4,
             });
         }
 
+        // 5. Escrever texto
         page.drawText(item.text, {
-          x: item.pdfX,
-          y: item.pdfY,
+          x: finalX,
+          y: finalY,
           size: item.fontSize,
           font: fontToUse,
           color: rgb(0, 0, 0),
@@ -314,7 +420,7 @@ export default function Editor() {
       const blob = new Blob([pdfBytes as any], { type: 'application/pdf' });
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
-      link.download = "NexuPDF_Editado.pdf"; // Nome do arquivo atualizado
+      link.download = `NexusPDF_${pdfFile.name}`;
       link.click();
 
     } catch (err) {
@@ -328,22 +434,39 @@ export default function Editor() {
   const activeItem = textItems.find(i => i.id === activeItemId);
 
   return (
-    <div className="flex flex-col h-screen bg-[#1a1a1a] text-white font-sans overflow-hidden">
+    <div 
+      className="flex flex-col h-screen bg-[#1a1a1a] text-white font-sans overflow-hidden"
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+    >
+      {/* HEADER PRINCIPAL */}
       <header className="flex items-center justify-between p-4 bg-[#111] border-b border-gray-800 z-10 shadow-md">
-        {/* NOME ATUALIZADO AQUI */}
-        <h1 className="text-2xl font-black italic text-blue-500 tracking-tighter flex items-center gap-2">
+        <h1 className="text-2xl font-black italic text-blue-500 tracking-tighter flex items-center gap-2 select-none">
           NexusPDF <span className="text-xs not-italic bg-blue-600 text-white px-2 py-0.5 rounded-full">PRO</span>
         </h1>
         
         <div className="flex items-center gap-4">
           
-          <div className="flex bg-gray-800 rounded-lg p-1 gap-1 border border-gray-700 items-center">
+          {/* BARRA DE FERRAMENTAS */}
+          <div className="flex bg-gray-800 rounded-lg p-1 gap-1 border border-gray-700 items-center shadow-lg">
             
+            <button 
+                onClick={addNewText}
+                disabled={!pdfFile}
+                className="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-900/50 text-blue-400 transition disabled:opacity-30 disabled:cursor-not-allowed font-bold text-sm uppercase tracking-wide"
+                title="Adicionar Caixa de Texto"
+            >
+                <PlusSquare size={18} />
+                <span className="hidden md:inline">Adicionar Texto</span>
+            </button>
+
+            <div className="w-px h-6 bg-gray-700 mx-1"></div>
+
             <button 
               onClick={handleUndo}
               disabled={history.length === 0}
               className="p-2 rounded hover:bg-gray-700 text-gray-300 disabled:opacity-30 disabled:cursor-not-allowed"
-              title="Desfazer"
+              title="Desfazer (Ctrl+Z)"
             >
                <Undo2 size={18} />
             </button>
@@ -355,14 +478,14 @@ export default function Editor() {
                 <button
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={restoreItem}
-                  className="p-2 rounded hover:bg-green-900/50 text-green-400 transition"
+                  className="p-2 rounded hover:bg-green-900/50 text-green-400 transition flex items-center gap-2 px-3"
                   title="Restaurar"
                 >
-                  <Undo2 size={18} />
+                  <Undo2 size={18} /> <span>Restaurar Texto</span>
                 </button>
               ) : (
                 <>
-                  <div className="relative px-1">
+                  <div className="relative px-1 group">
                     <select 
                         className="appearance-none bg-gray-900 text-white border border-gray-600 rounded px-3 py-1 text-xs font-bold uppercase tracking-wider cursor-pointer hover:border-blue-500 focus:outline-none focus:border-blue-500 transition-colors"
                         value={activeItem.fontFamily}
@@ -380,12 +503,19 @@ export default function Editor() {
                     </div>
                   </div>
 
+                  {/* CONTROLE DE TAMANHO DA FONTE */}
+                  <div className="flex items-center gap-0.5 bg-gray-900 rounded border border-gray-600 mx-1">
+                      <button onClick={() => changeFontSize(-2)} className="p-1 hover:text-blue-400"><Minus size={12}/></button>
+                      <span className="text-xs font-bold w-6 text-center select-none">{Math.round(activeItem.fontSize)}</span>
+                      <button onClick={() => changeFontSize(2)} className="p-1 hover:text-blue-400"><Plus size={12}/></button>
+                  </div>
+
                   <div className="w-px h-6 bg-gray-700 mx-1"></div>
 
                   <button
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={toggleBold}
-                    className={`p-2 rounded hover:bg-gray-700 transition ${activeItem?.isBold ? 'text-blue-400 bg-gray-900' : 'text-gray-300'}`}
+                    className={`p-2 rounded hover:bg-gray-700 transition ${activeItem?.isBold ? 'text-blue-400 bg-gray-900 shadow-inner' : 'text-gray-300'}`}
                     title="Negrito"
                   >
                     <Bold size={18} />
@@ -403,8 +533,9 @@ export default function Editor() {
                           key={c.color}
                           onMouseDown={(e) => e.preventDefault()}
                           onClick={() => highlightItem(c.color)}
-                          className={`w-4 h-4 rounded-full border transition hover:scale-110 ${activeItem?.highlightColor === c.color ? 'border-white ring-1 ring-white' : 'border-transparent'}`}
+                          className={`w-4 h-4 rounded-full border transition hover:scale-125 ${activeItem?.highlightColor === c.color ? 'border-white ring-1 ring-white' : 'border-transparent'}`}
                           style={{ backgroundColor: c.color }}
+                          title={`Marca-texto ${c.label}`}
                         />
                       ))}
                       {activeItem?.highlightColor && (
@@ -418,20 +549,20 @@ export default function Editor() {
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={deleteItem}
                     className="p-2 rounded hover:bg-red-900/50 text-red-400 transition ml-1"
-                    title="Excluir"
+                    title={activeItem.isAdded ? "Excluir Caixa" : "Excluir Texto"}
                   >
                     <Trash2 size={18} />
                   </button>
                 </>
               )
             ) : (
-                <span className="text-xs text-gray-500 flex items-center px-4 font-mono h-8">SELECIONE TEXTO</span>
+                <span className="text-xs text-gray-500 flex items-center px-4 font-mono h-8 uppercase tracking-widest opacity-50">Selecione um texto</span>
             )}
           </div>
 
-          <label className="flex items-center gap-2 bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-lg cursor-pointer transition-all text-sm font-bold uppercase tracking-wider">
+          <label className="flex items-center gap-2 bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-lg cursor-pointer transition-all text-sm font-bold uppercase tracking-wider border border-gray-700 hover:border-gray-500">
             <FileUp size={18} className="text-blue-400"/>
-            <span className="hidden md:inline">Abrir</span>
+            <span className="hidden md:inline">Abrir PDF</span>
             <input type="file" className="hidden" accept=".pdf" onChange={handleUpload} />
           </label>
           <button 
@@ -445,9 +576,18 @@ export default function Editor() {
         </div>
       </header>
 
+      {/* ÁREA DE VISUALIZAÇÃO */}
       <main className="flex-1 overflow-y-auto bg-[#222] p-8 flex flex-col items-center gap-8 relative scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-transparent">
+        
+        {loading && (
+          <div className="absolute inset-0 z-50 bg-black/80 flex flex-col items-center justify-center backdrop-blur-sm">
+             <Loader2 size={64} className="text-blue-500 animate-spin mb-4" />
+             <p className="text-blue-400 font-mono animate-pulse">PROCESSANDO PDF...</p>
+          </div>
+        )}
+
         {pageImages.map((imgSrc, pIndex) => (
-          <div key={pIndex} className="relative shadow-2xl shadow-black/50 rounded-sm group">
+          <div key={pIndex} className="relative shadow-2xl shadow-black/50 rounded-sm group transition-transform duration-300">
             <img src={imgSrc} alt={`Página ${pIndex + 1}`} className="max-w-none select-none pointer-events-none" style={{ width: '100%' }} />
 
             <div className="absolute inset-0">
@@ -458,7 +598,8 @@ export default function Editor() {
                 
                 const isChanged = item.text !== item.originalText;
                 const isSelected = item.id === activeItemId;
-                const showText = isChanged || item.isDeleted || isSelected;
+                // Itens adicionados são sempre visíveis
+                const showText = item.isAdded || isChanged || item.isDeleted || isSelected;
 
                 const highlightStyle = item.highlightColor ? {
                     backgroundColor: item.highlightColor,
@@ -474,28 +615,38 @@ export default function Editor() {
                   opacity: 1
                 } : {};
 
+                // Estilo para caixa adicionada (Drag)
+                const addedStyle = item.isAdded ? {
+                    cursor: item.isEditing ? 'text' : 'move',
+                    border: isSelected ? '1px dashed #3b82f6' : '1px dashed transparent',
+                    backgroundColor: isSelected ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
+                } : {
+                    cursor: 'text'
+                };
+
                 if (item.isEditing && !item.isDeleted) {
                   return (
-                    <input
+                    <textarea
                       key={item.id}
-                      type="text"
                       value={item.text}
                       onChange={(e) => handleTextChange(e.target.value, item.id)}
                       onBlur={() => handleBlur(item.id)}
                       onFocus={handleFocus}
                       autoFocus
-                      className="absolute z-20 bg-white text-black border border-blue-500 outline-none p-0 m-0 shadow-sm"
+                      className="absolute z-20 bg-white text-black border-2 border-blue-500 outline-none p-0 m-0 shadow-xl rounded-sm resize-none overflow-hidden"
                       style={{
                         left: `${item.x}px`,
                         top: `${item.y}px`,
-                        width: `${item.width + 20}px`,
-                        height: `${item.height}px`,
+                        // Para itens adicionados, a largura se adapta ou é fixa, aqui deixamos flexível
+                        width: item.isAdded ? 'auto' : `${item.width + 30}px`,
+                        minWidth: item.isAdded ? '100px' : 'unset',
+                        height: `${item.height * 1.5}px`, // Um pouco mais alto para digitação
                         fontSize: `${scaledFontSize}px`,
                         fontFamily: cssFontFamily,
                         fontWeight: item.isBold ? 'bold' : 'normal',
                         lineHeight: 1,
-                        transform: `translateY(${item.height * 0.15}px)`,
-                        paddingLeft: '2px'
+                        paddingLeft: '4px',
+                        whiteSpace: 'pre'
                       }}
                     />
                   );
@@ -503,31 +654,41 @@ export default function Editor() {
                   return (
                     <div
                       key={item.id}
+                      onMouseDown={(e) => handleMouseDown(e, item)}
                       onClick={(e) => {
                         e.stopPropagation();
                         handleTextClick(item.id);
                       }}
-                      className={`absolute cursor-text rounded-sm select-none transition-all
-                        ${isSelected ? 'ring-2 ring-blue-500 z-10' : 'hover:ring-1 hover:ring-blue-400'}
-                        ${showText ? 'bg-white text-black px-0.5' : 'text-transparent'}
+                      className={`absolute rounded-sm select-none transition-all duration-150
+                        ${isSelected && !item.isAdded ? 'ring-2 ring-blue-500 z-10' : ''}
+                        ${!item.isAdded && !isSelected ? 'hover:ring-1 hover:ring-blue-400' : ''}
+                        ${showText ? 'text-black px-0.5 shadow-sm' : 'text-transparent'}
                         ${item.isDeleted ? 'opacity-70' : ''}
                       `}
                       style={{
                         left: `${item.x}px`,
                         top: `${item.y}px`,
-                        width: `${item.width}px`,
-                        height: `${item.height}px`,
+                        width: item.isAdded ? 'auto' : `${item.width}px`,
+                        height: item.isAdded ? 'auto' : `${item.height}px`,
                         fontSize: `${scaledFontSize}px`,
                         fontFamily: cssFontFamily,
                         fontWeight: item.isBold ? 'bold' : 'normal',
                         lineHeight: 1,
                         whiteSpace: 'pre',
-                        overflow: 'hidden',
+                        // Para itens adicionados, removemos overflow hidden para ver tudo
+                        overflow: item.isAdded ? 'visible' : 'hidden',
                         ...(item.highlightColor && !isChanged ? highlightStyle : {}),
                         ...(item.highlightColor && isChanged ? { borderBottom: `4px solid ${item.highlightColor}` } : {}),
-                        ...deletedStyle
+                        ...deletedStyle,
+                        ...addedStyle,
+                        backgroundColor: showText ? (item.isAdded ? 'transparent' : 'white') : 'transparent'
                       }}
                     >
+                      {item.isAdded && isSelected && (
+                          <div className="absolute -top-4 -right-4 bg-blue-500 rounded-full p-1 shadow-lg pointer-events-none">
+                              <Move size={10} className="text-white"/>
+                          </div>
+                      )}
                       {item.text}
                       {item.highlightColor && !isChanged && !item.isDeleted && (
                         <div className="absolute inset-0 pointer-events-none opacity-50" style={{ backgroundColor: item.highlightColor }}></div>
@@ -545,7 +706,7 @@ export default function Editor() {
             </div>
             
             <div className="absolute top-2 -left-10 text-gray-500 font-bold text-xs opacity-50 group-hover:opacity-100 transition-opacity">
-              #{pIndex + 1}
+              PAG {pIndex + 1}
             </div>
           </div>
         ))}
@@ -555,9 +716,8 @@ export default function Editor() {
             <div className="w-32 h-32 rounded-full border-4 border-dashed border-gray-700 flex items-center justify-center mb-6 animate-pulse">
               <FileUp size={48} className="text-gray-600"/>
             </div>
-            {/* TÍTULO ATUALIZADO AQUI */}
             <h2 className="text-4xl font-black text-gray-700 tracking-tighter mb-2">NEXUS PDF PRO</h2>
-            <p className="text-gray-600 font-bold tracking-[0.5em] uppercase text-sm">Abra um arquivo para começar</p>
+            <p className="text-gray-600 font-bold tracking-[0.5em] uppercase text-sm">Abra um arquivo para editar</p>
           </div>
         )}
       </main>
